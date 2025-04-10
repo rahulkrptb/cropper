@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { ImageFile } from "@/types"
-import { ZoomIn, ZoomOut, RotateCcw, Crop, ArrowLeft, RefreshCcw } from "lucide-react"
+import { ZoomIn, ZoomOut, RotateCcw, Crop, RefreshCcw } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface ImageCropperProps {
@@ -31,7 +31,10 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
   const [cropMode, setCropMode] = useState<"aspect" | "resolution">("aspect")
   const [aspectRatio, setAspectRatio] = useState<number>(1)
   const [customAspect, setCustomAspect] = useState<{ width: string; height: string }>({ width: "1", height: "1" })
-  const [targetResolution, setTargetResolution] = useState<{ width: string; height: string }>({
+  const [targetResolution, setTargetResolution] = useState<{
+    width: string
+    height: string
+  }>({
     width: "1080",
     height: "1080",
   })
@@ -103,10 +106,6 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
       throw new Error("Could not get canvas context")
     }
 
-    // Calculate the bounding box of the rotated image
-    const imageWidth = image.naturalWidth
-    const imageHeight = image.naturalHeight
-
     // Set canvas size based on crop or target resolution
     if (targetWidth && targetHeight) {
       canvas.width = targetWidth
@@ -116,50 +115,63 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
       canvas.height = pixelCrop.height
     }
 
-    // Fill with background color if extending canvas
-    if (extend) {
-      ctx.fillStyle = bgColor
-      ctx.fillRect(0, 0, canvas.width, canvas.height)
-    }
+    // Fill with background color
+    ctx.fillStyle = bgColor
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
 
     // Save context
     ctx.save()
 
-    // Move the canvas origin to the center of the image
+    // Calculate the center of the canvas
     const centerX = canvas.width / 2
     const centerY = canvas.height / 2
+
+    // Move to the center of the canvas
     ctx.translate(centerX, centerY)
 
-    // Rotate the canvas around the center
+    // Rotate around the center
     ctx.rotate((rotation * Math.PI) / 180)
 
-    // Calculate scaling to fit the crop area or target resolution
-    let scale = 1
+    // Calculate scaling factors
+    let scaleX = 1
+    let scaleY = 1
+
     if (targetWidth && targetHeight) {
+      // Calculate scaling to maintain aspect ratio while fitting the target dimensions
       const cropAspect = pixelCrop.width / pixelCrop.height
       const targetAspect = targetWidth / targetHeight
 
       if (cropAspect > targetAspect) {
         // Crop is wider than target, scale to fit width
-        scale = targetWidth / pixelCrop.width
+        scaleX = targetWidth / pixelCrop.width
+        scaleY = targetWidth / pixelCrop.width
       } else {
         // Crop is taller than target, scale to fit height
-        scale = targetHeight / pixelCrop.height
+        scaleX = targetHeight / pixelCrop.height
+        scaleY = targetHeight / pixelCrop.height
       }
     }
 
-    // Draw the image centered and scaled
-    ctx.scale(scale, scale)
+    // Apply scaling
+    ctx.scale(scaleX, scaleY)
+
+    // Calculate the source position in the original image
+    const sourceX = pixelCrop.x
+    const sourceY = pixelCrop.y
+    const sourceWidth = pixelCrop.width
+    const sourceHeight = pixelCrop.height
+
+    // Draw the image centered
     ctx.drawImage(
       image,
-      pixelCrop.x,
-      pixelCrop.y,
-      pixelCrop.width,
-      pixelCrop.height,
-      -pixelCrop.width / 2,
-      -pixelCrop.height / 2,
-      pixelCrop.width,
-      pixelCrop.height,
+      sourceX,
+      sourceY,
+      sourceWidth,
+      sourceHeight,
+      -sourceWidth / 2,
+      -sourceHeight / 2,
+      sourceWidth,
+      sourceHeight,
     )
 
     // Restore context
@@ -186,6 +198,10 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
       if (cropMode === "resolution") {
         targetWidth = Number.parseInt(targetResolution.width, 10) || 1080
         targetHeight = Number.parseInt(targetResolution.height, 10) || 1080
+      } else {
+        // When using aspect ratio mode, we don't specify target dimensions
+        targetWidth = undefined
+        targetHeight = undefined
       }
 
       const croppedImage = await getCroppedImg(
@@ -231,8 +247,8 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
           onCropComplete={onCropComplete}
           onZoomChange={setZoom}
           onMediaLoaded={(mediaSize) => {
-            if (mediaSize && 'naturalWidth' in mediaSize) {
-              onImageLoad(mediaSize as unknown as HTMLImageElement);
+            if (mediaSize && "naturalWidth" in mediaSize) {
+              onImageLoad(mediaSize as unknown as HTMLImageElement)
             }
           }}
           objectFit="contain"
@@ -346,42 +362,49 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
                   />
                 </div>
               </div>
+              <p className="text-xs text-muted-foreground">
+                The output image will be exactly {targetResolution.width} × {targetResolution.height} pixels.
+              </p>
             </TabsContent>
           </Tabs>
 
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="extend-canvas"
-                checked={extendCanvas}
-                onChange={(e) => setExtendCanvas(e.target.checked)}
-                className="rounded border-gray-300"
-              />
-              <Label htmlFor="extend-canvas">Extend canvas if needed</Label>
-            </div>
-
-            {extendCanvas && (
+            <div className="space-y-3 border p-3 rounded-md">
               <div className="flex items-center gap-2">
-                <Label htmlFor="bg-color" className="whitespace-nowrap">
-                  Background:
+                <input
+                  type="checkbox"
+                  id="extend-canvas"
+                  checked={extendCanvas}
+                  onChange={(e) => setExtendCanvas(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <Label htmlFor="extend-canvas" className="font-medium">
+                  Extend canvas if needed
                 </Label>
-                <div className="flex items-center gap-2 border rounded p-1">
-                  <input
-                    type="color"
-                    id="bg-color"
-                    value={backgroundColor}
-                    onChange={(e) => setBackgroundColor(e.target.value)}
-                    className="w-6 h-6 border-0"
-                  />
-                  <Input
-                    value={backgroundColor}
-                    onChange={(e) => setBackgroundColor(e.target.value)}
-                    className="h-7 min-w-0 w-20"
-                  />
+              </div>
+
+              <div className={extendCanvas ? "opacity-100" : "opacity-50 pointer-events-none"}>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="bg-color" className="whitespace-nowrap">
+                    Background:
+                  </Label>
+                  <div className="flex items-center gap-2 border rounded p-1">
+                    <input
+                      type="color"
+                      id="bg-color"
+                      value={backgroundColor}
+                      onChange={(e) => setBackgroundColor(e.target.value)}
+                      className="w-6 h-6 border-0"
+                    />
+                    <Input
+                      value={backgroundColor}
+                      onChange={(e) => setBackgroundColor(e.target.value)}
+                      className="h-7 min-w-0 w-20"
+                    />
+                  </div>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
