@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useCallback, useRef } from "react"
-import Cropper from "react-easy-crop"
+import type React from "react"
+
+import { useState, useCallback, useRef, useEffect, useMemo } from "react"
 import { Slider } from "@/components/ui/slider"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -23,13 +24,16 @@ interface CropArea {
   height: number
 }
 
+interface Point {
+  x: number
+  y: number
+}
+
 export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropperProps) {
-  const [crop, setCrop] = useState({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [rotation, setRotation] = useState(0)
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<CropArea | null>(null)
   const [cropMode, setCropMode] = useState<"aspect" | "resolution">("aspect")
-  const [aspectRatio, setAspectRatio] = useState<number>(1)
+  const [aspectRatio, setAspectRatio] = useState<number | null>(1)
   const [customAspect, setCustomAspect] = useState<{ width: string; height: string }>({ width: "1", height: "1" })
   const [targetResolution, setTargetResolution] = useState<{
     width: string
@@ -41,22 +45,159 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
   const [extendCanvas, setExtendCanvas] = useState<boolean>(false)
   const [backgroundColor, setBackgroundColor] = useState<string>("#ffffff")
 
-  const imageRef = useRef<HTMLImageElement | null>(null)
+  // Refs for the container and image
+  const containerRef = useRef<HTMLDivElement>(null)
+  const imageRef = useRef<HTMLImageElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const rafRef = useRef<number | null>(null)
 
-  // Load the image to get its natural dimensions
-  const onImageLoad = useCallback((img: HTMLImageElement) => {
-    imageRef.current = img
-  }, [])
+  // State for the crop area
+  const [cropArea, setCropArea] = useState<CropArea>({ x: 0, y: 0, width: 0, height: 0 })
+  const [imageSize, setImageSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 })
+  const [imagePosition, setImagePosition] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
 
-  const onCropComplete = useCallback((_: any, croppedAreaPixels: CropArea) => {
-    setCroppedAreaPixels(croppedAreaPixels)
-  }, [])
+  // State for dragging
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStartPointRef = useRef<Point | null>(null)
+  const dragCornerRef = useRef<string | null>(null)
+  const dragStartCropRef = useRef<CropArea | null>(null)
 
+  // Memoize the image loading function to prevent unnecessary re-renders
+  const loadImage = useCallback(() => {
+    const img = new Image()
+    img.onload = () => {
+      if (containerRef.current) {
+        const containerWidth = containerRef.current.clientWidth
+        const containerHeight = containerRef.current.clientHeight
+
+        // Calculate the scaled image dimensions to fit in the container
+        const scale = Math.min(containerWidth / img.width, containerHeight / img.height) * zoom
+
+        const scaledWidth = img.width * scale
+        const scaledHeight = img.height * scale
+
+        // Center the image in the container
+        const x = (containerWidth - scaledWidth) / 2
+        const y = (containerHeight - scaledHeight) / 2
+
+        setImageSize({ width: scaledWidth, height: scaledHeight })
+        setContainerSize({ width: containerWidth, height: containerHeight })
+        setImagePosition({ x, y })
+
+        // Initialize the crop area to cover the entire image
+        const initialCrop = {
+          x,
+          y,
+          width: scaledWidth,
+          height: scaledHeight,
+        }
+
+        setCropArea(initialCrop)
+      }
+    }
+    img.src = imageFile.url
+  }, [imageFile.url, zoom])
+
+  // Initialize the crop area when the image loads
+  useEffect(() => {
+    loadImage()
+  }, [loadImage])
+
+  // Update crop area when aspect ratio changes
+  useEffect(() => {
+    if (aspectRatio !== null && cropArea.width > 0 && cropArea.height > 0) {
+      const currentWidth = cropArea.width
+      const currentHeight = cropArea.height
+      const currentAspect = currentWidth / currentHeight
+
+      if (Math.abs(currentAspect - aspectRatio) > 0.01) {
+        // Adjust the crop area to match the aspect ratio
+        let newWidth = currentWidth
+        let newHeight = currentHeight
+
+        if (currentAspect > aspectRatio) {
+          // Too wide, reduce width
+          newWidth = currentHeight * aspectRatio
+        } else {
+          // Too tall, reduce height
+          newHeight = currentWidth / aspectRatio
+        }
+
+        // Center the new crop area
+        const newX = cropArea.x + (currentWidth - newWidth) / 2
+        const newY = cropArea.y + (currentHeight - newHeight) / 2
+
+        setCropArea({
+          x: newX,
+          y: newY,
+          width: newWidth,
+          height: newHeight,
+        })
+      }
+    }
+  }, [aspectRatio, cropArea])
+
+  // Handle window resize with debounce
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout | null = null
+
+    const handleResize = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+
+      timeoutId = setTimeout(() => {
+        if (containerRef.current && imageRef.current) {
+          const containerWidth = containerRef.current.clientWidth
+          const containerHeight = containerRef.current.clientHeight
+
+          setContainerSize({ width: containerWidth, height: containerHeight })
+
+          // Recalculate image position and size
+          const img = imageRef.current
+          const scale = Math.min(containerWidth / img.naturalWidth, containerHeight / img.naturalHeight) * zoom
+
+          const scaledWidth = img.naturalWidth * scale
+          const scaledHeight = img.naturalHeight * scale
+
+          const x = (containerWidth - scaledWidth) / 2
+          const y = (containerHeight - scaledHeight) / 2
+
+          setImageSize({ width: scaledWidth, height: scaledHeight })
+          setImagePosition({ x, y })
+
+          // Adjust crop area proportionally
+          const widthRatio = scaledWidth / imageSize.width
+          const heightRatio = scaledHeight / imageSize.height
+
+          setCropArea({
+            x: x + (cropArea.x - imagePosition.x) * widthRatio,
+            y: y + (cropArea.y - imagePosition.y) * heightRatio,
+            width: cropArea.width * widthRatio,
+            height: cropArea.height * heightRatio,
+          })
+        }
+      }, 100) // 100ms debounce
+    }
+
+    window.addEventListener("resize", handleResize)
+    return () => {
+      window.removeEventListener("resize", handleResize)
+      if (timeoutId) {
+        clearTimeout(timeoutId)
+      }
+    }
+  }, [cropArea, imagePosition, imageSize, zoom])
+
+  // Handle aspect ratio change
   const handleAspectRatioChange = useCallback(
     (value: string) => {
       if (value === "custom") {
         const ratio = Number.parseFloat(customAspect.width) / Number.parseFloat(customAspect.height)
         setAspectRatio(ratio || 1)
+      } else if (value === "free") {
+        setAspectRatio(null)
       } else {
         setAspectRatio(Number.parseFloat(value))
       }
@@ -64,6 +205,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
     [customAspect],
   )
 
+  // Handle custom aspect ratio change
   const handleCustomAspectChange = useCallback(
     (dimension: "width" | "height", value: string) => {
       const newCustomAspect = { ...customAspect, [dimension]: value }
@@ -79,7 +221,226 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
     [customAspect],
   )
 
-  const createImage = (url: string): Promise<HTMLImageElement> => {
+  // Mouse event handlers for crop area manipulation
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent, corner?: string) => {
+      if (!containerRef.current) return
+
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+
+      setIsDragging(true)
+      dragStartPointRef.current = { x, y }
+      dragStartCropRef.current = { ...cropArea }
+
+      if (corner) {
+        dragCornerRef.current = corner
+      } else if (
+        x >= cropArea.x &&
+        x <= cropArea.x + cropArea.width &&
+        y >= cropArea.y &&
+        y <= cropArea.y + cropArea.height
+      ) {
+        // Dragging the entire crop area
+        dragCornerRef.current = "move"
+      }
+    },
+    [cropArea],
+  )
+
+  const updateCropArea = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging || !dragStartPointRef.current || !dragStartCropRef.current || !containerRef.current) return
+
+      const rect = containerRef.current.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const y = e.clientY - rect.top
+
+      const deltaX = x - dragStartPointRef.current.x
+      const deltaY = y - dragStartPointRef.current.y
+
+      let newCrop = { ...cropArea }
+
+      if (dragCornerRef.current === "move") {
+        // Move the entire crop area
+        newCrop.x = dragStartCropRef.current.x + deltaX
+        newCrop.y = dragStartCropRef.current.y + deltaY
+
+        // Constrain to container boundaries if not extending canvas
+        if (!extendCanvas) {
+          if (newCrop.x < imagePosition.x) newCrop.x = imagePosition.x
+          if (newCrop.y < imagePosition.y) newCrop.y = imagePosition.y
+          if (newCrop.x + newCrop.width > imagePosition.x + imageSize.width) {
+            newCrop.x = imagePosition.x + imageSize.width - newCrop.width
+          }
+          if (newCrop.y + newCrop.height > imagePosition.y + imageSize.height) {
+            newCrop.y = imagePosition.y + imageSize.height - newCrop.height
+          }
+        }
+      } else {
+        // Resize by dragging corners
+        let newWidth = dragStartCropRef.current.width
+        let newHeight = dragStartCropRef.current.height
+        let newX = dragStartCropRef.current.x
+        let newY = dragStartCropRef.current.y
+
+        switch (dragCornerRef.current) {
+          case "topLeft":
+            newX = dragStartCropRef.current.x + deltaX
+            newY = dragStartCropRef.current.y + deltaY
+            newWidth = dragStartCropRef.current.width - deltaX
+            newHeight = dragStartCropRef.current.height - deltaY
+            break
+          case "topRight":
+            newY = dragStartCropRef.current.y + deltaY
+            newWidth = dragStartCropRef.current.width + deltaX
+            newHeight = dragStartCropRef.current.height - deltaY
+            break
+          case "bottomLeft":
+            newX = dragStartCropRef.current.x + deltaX
+            newWidth = dragStartCropRef.current.width - deltaX
+            newHeight = dragStartCropRef.current.height + deltaY
+            break
+          case "bottomRight":
+            newWidth = dragStartCropRef.current.width + deltaX
+            newHeight = dragStartCropRef.current.height + deltaY
+            break
+        }
+
+        // Maintain aspect ratio if needed
+        if (aspectRatio !== null) {
+          if (dragCornerRef.current === "topLeft" || dragCornerRef.current === "bottomRight") {
+            newHeight = newWidth / aspectRatio
+          } else {
+            newWidth = newHeight * aspectRatio
+          }
+
+          // Adjust position for top-left corner
+          if (dragCornerRef.current === "topLeft") {
+            newX = dragStartCropRef.current.x + dragStartCropRef.current.width - newWidth
+            newY = dragStartCropRef.current.y + dragStartCropRef.current.height - newHeight
+          } else if (dragCornerRef.current === "topRight") {
+            newY = dragStartCropRef.current.y + dragStartCropRef.current.height - newHeight
+          } else if (dragCornerRef.current === "bottomLeft") {
+            newX = dragStartCropRef.current.x + dragStartCropRef.current.width - newWidth
+          }
+        }
+
+        // Ensure minimum size
+        const minSize = 20
+        if (newWidth < minSize) {
+          newWidth = minSize
+          if (dragCornerRef.current === "topLeft" || dragCornerRef.current === "bottomLeft") {
+            newX = dragStartCropRef.current.x + dragStartCropRef.current.width - minSize
+          }
+        }
+        if (newHeight < minSize) {
+          newHeight = minSize
+          if (dragCornerRef.current === "topLeft" || dragCornerRef.current === "topRight") {
+            newY = dragStartCropRef.current.y + dragStartCropRef.current.height - minSize
+          }
+        }
+
+        // Constrain to image boundaries if not extending canvas
+        if (!extendCanvas) {
+          if (newX < imagePosition.x) {
+            newX = imagePosition.x
+            newWidth = dragStartCropRef.current.x + dragStartCropRef.current.width - imagePosition.x
+          }
+          if (newY < imagePosition.y) {
+            newY = imagePosition.y
+            newHeight = dragStartCropRef.current.y + dragStartCropRef.current.height - imagePosition.y
+          }
+          if (newX + newWidth > imagePosition.x + imageSize.width) {
+            newWidth = imagePosition.x + imageSize.width - newX
+          }
+          if (newY + newHeight > imagePosition.y + imageSize.height) {
+            newHeight = imagePosition.y + imageSize.height - newY
+          }
+
+          // Maintain aspect ratio after constraints
+          if (aspectRatio !== null) {
+            const constrainedAspect = newWidth / newHeight
+            if (Math.abs(constrainedAspect - aspectRatio) > 0.01) {
+              // Adjust to maintain aspect ratio within constraints
+              if (constrainedAspect > aspectRatio) {
+                // Too wide, reduce width
+                newWidth = newHeight * aspectRatio
+              } else {
+                // Too tall, reduce height
+                newHeight = newWidth / aspectRatio
+              }
+            }
+          }
+        }
+
+        newCrop = {
+          x: newX,
+          y: newY,
+          width: newWidth,
+          height: newHeight,
+        }
+      }
+
+      setCropArea(newCrop)
+    },
+    [aspectRatio, cropArea, extendCanvas, imagePosition, imageSize.height, imageSize.width, isDragging],
+  )
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging) return
+
+      // Cancel any existing animation frame
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+      }
+
+      // Use requestAnimationFrame for smoother updates
+      rafRef.current = requestAnimationFrame(() => {
+        updateCropArea(e)
+      })
+    },
+    [isDragging, updateCropArea],
+  )
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false)
+    dragStartPointRef.current = null
+    dragCornerRef.current = null
+    dragStartCropRef.current = null
+
+    // Cancel any pending animation frame
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  }, [])
+
+  // Clean up any animation frames on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+      }
+    }
+  }, [])
+
+  // Reset crop to cover the entire image
+  const resetCrop = useCallback(() => {
+    setCropArea({
+      x: imagePosition.x,
+      y: imagePosition.y,
+      width: imageSize.width,
+      height: imageSize.height,
+    })
+    setZoom(1)
+    setRotation(0)
+  }, [imagePosition.x, imagePosition.y, imageSize.height, imageSize.width])
+
+  // Create a cropped image from the canvas
+  const createImage = useCallback((url: string): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
       const image = new Image()
       image.addEventListener("load", () => resolve(image))
@@ -87,18 +448,11 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
       image.crossOrigin = "anonymous"
       image.src = url
     })
-  }
+  }, [])
 
-  const getCroppedImg = async (
-    imageSrc: string,
-    pixelCrop: CropArea,
-    rotation = 0,
-    targetWidth?: number,
-    targetHeight?: number,
-    extend = false,
-    bgColor = "#ffffff",
-  ): Promise<string> => {
-    const image = await createImage(imageSrc)
+  // Get the cropped image
+  const getCroppedImg = useCallback(async (): Promise<string> => {
+    const image = await createImage(imageFile.url)
     const canvas = document.createElement("canvas")
     const ctx = canvas.getContext("2d")
 
@@ -106,72 +460,55 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
       throw new Error("Could not get canvas context")
     }
 
+    // Calculate the crop area in the original image coordinates
+    const scaleX = image.naturalWidth / imageSize.width
+    const scaleY = image.naturalHeight / imageSize.height
+
+    // Calculate the source coordinates in the original image
+    const sourceX = (cropArea.x - imagePosition.x) * scaleX
+    const sourceY = (cropArea.y - imagePosition.y) * scaleY
+    const sourceWidth = cropArea.width * scaleX
+    const sourceHeight = cropArea.height * scaleY
+
     // Set canvas size based on crop or target resolution
-    if (targetWidth && targetHeight) {
-      canvas.width = targetWidth
-      canvas.height = targetHeight
-    } else {
-      canvas.width = pixelCrop.width
-      canvas.height = pixelCrop.height
+    let targetWidth = cropArea.width * scaleX
+    let targetHeight = cropArea.height * scaleY
+
+    if (cropMode === "resolution") {
+      targetWidth = Number.parseInt(targetResolution.width, 10) || 1080
+      targetHeight = Number.parseInt(targetResolution.height, 10) || 1080
     }
 
+    canvas.width = targetWidth
+    canvas.height = targetHeight
+
     // Fill with background color
-    ctx.fillStyle = bgColor
+    ctx.fillStyle = backgroundColor
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
     // Save context
     ctx.save()
 
-    // Calculate the center of the canvas
-    const centerX = canvas.width / 2
-    const centerY = canvas.height / 2
-
-    // Move to the center of the canvas
-    ctx.translate(centerX, centerY)
+    // Move to the center of the canvas for rotation
+    ctx.translate(canvas.width / 2, canvas.height / 2)
 
     // Rotate around the center
     ctx.rotate((rotation * Math.PI) / 180)
 
-    // Calculate scaling factors
-    let scaleX = 1
-    let scaleY = 1
+    // Calculate scaling factors to fit the target dimensions
+    const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight)
 
-    if (targetWidth && targetHeight) {
-      // Calculate scaling to maintain aspect ratio while fitting the target dimensions
-      const cropAspect = pixelCrop.width / pixelCrop.height
-      const targetAspect = targetWidth / targetHeight
-
-      if (cropAspect > targetAspect) {
-        // Crop is wider than target, scale to fit width
-        scaleX = targetWidth / pixelCrop.width
-        scaleY = targetWidth / pixelCrop.width
-      } else {
-        // Crop is taller than target, scale to fit height
-        scaleX = targetHeight / pixelCrop.height
-        scaleY = targetHeight / pixelCrop.height
-      }
-    }
-
-    // Apply scaling
-    ctx.scale(scaleX, scaleY)
-
-    // Calculate the source position in the original image
-    const sourceX = pixelCrop.x
-    const sourceY = pixelCrop.y
-    const sourceWidth = pixelCrop.width
-    const sourceHeight = pixelCrop.height
-
-    // Draw the image centered
+    // Draw the image centered and scaled
     ctx.drawImage(
       image,
       sourceX,
       sourceY,
       sourceWidth,
       sourceHeight,
-      -sourceWidth / 2,
-      -sourceHeight / 2,
-      sourceWidth,
-      sourceHeight,
+      (-sourceWidth * scale) / 2,
+      (-sourceHeight * scale) / 2,
+      sourceWidth * scale,
+      sourceHeight * scale,
     )
 
     // Restore context
@@ -187,72 +524,192 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
     }
 
     return canvas.toDataURL(mimeType, 1.0)
-  }
+  }, [
+    backgroundColor,
+    createImage,
+    cropArea,
+    cropMode,
+    imageFile.type,
+    imageFile.url,
+    imagePosition.x,
+    imagePosition.y,
+    imageSize.height,
+    imageSize.width,
+    rotation,
+    targetResolution.height,
+    targetResolution.width,
+  ])
 
-  const handleCrop = async () => {
-    if (!croppedAreaPixels) return
-
+  // Handle crop button click
+  const handleCrop = useCallback(async () => {
     try {
-      let targetWidth, targetHeight
-
-      if (cropMode === "resolution") {
-        targetWidth = Number.parseInt(targetResolution.width, 10) || 1080
-        targetHeight = Number.parseInt(targetResolution.height, 10) || 1080
-      } else {
-        // When using aspect ratio mode, we don't specify target dimensions
-        targetWidth = undefined
-        targetHeight = undefined
-      }
-
-      const croppedImage = await getCroppedImg(
-        imageFile.url,
-        croppedAreaPixels,
-        rotation,
-        targetWidth,
-        targetHeight,
-        extendCanvas,
-        backgroundColor,
-      )
-
+      const croppedImage = await getCroppedImg()
       onCroppedImage(croppedImage)
     } catch (e) {
       console.error("Error cropping image:", e)
     }
-  }
+  }, [getCroppedImg, onCroppedImage])
 
-  const resetCrop = () => {
-    setCrop({ x: 0, y: 0 })
-    setZoom(1)
-    setRotation(0)
-  }
+  // Memoize the crop area rendering to prevent unnecessary re-renders
+  const cropAreaElements = useMemo(() => {
+    if (!cropArea.width || !cropArea.height) return null
+
+    // Calculate corner positions
+    const topLeft = { x: cropArea.x, y: cropArea.y }
+    const topRight = { x: cropArea.x + cropArea.width, y: cropArea.y }
+    const bottomLeft = { x: cropArea.x, y: cropArea.y + cropArea.height }
+    const bottomRight = { x: cropArea.x + cropArea.width, y: cropArea.y + cropArea.height }
+
+    // Corner size
+    const cornerSize = 10
+
+    return (
+      <>
+        {/* Overlay outside crop area */}
+        <div className="absolute inset-0 bg-black bg-opacity-50">
+          {/* Clear the crop area */}
+          <div
+            className="absolute border-2 border-white"
+            style={{
+              left: cropArea.x,
+              top: cropArea.y,
+              width: cropArea.width,
+              height: cropArea.height,
+              backgroundColor: "transparent",
+              cursor: "move",
+            }}
+            onMouseDown={(e) => handleMouseDown(e)}
+          />
+        </div>
+
+        {/* Draggable corners */}
+        <div
+          className="absolute bg-white border border-gray-400 rounded-full cursor-nwse-resize"
+          style={{
+            left: topLeft.x - cornerSize / 2,
+            top: topLeft.y - cornerSize / 2,
+            width: cornerSize,
+            height: cornerSize,
+          }}
+          onMouseDown={(e) => handleMouseDown(e, "topLeft")}
+        />
+        <div
+          className="absolute bg-white border border-gray-400 rounded-full cursor-nesw-resize"
+          style={{
+            left: topRight.x - cornerSize / 2,
+            top: topRight.y - cornerSize / 2,
+            width: cornerSize,
+            height: cornerSize,
+          }}
+          onMouseDown={(e) => handleMouseDown(e, "topRight")}
+        />
+        <div
+          className="absolute bg-white border border-gray-400 rounded-full cursor-nesw-resize"
+          style={{
+            left: bottomLeft.x - cornerSize / 2,
+            top: bottomLeft.y - cornerSize / 2,
+            width: cornerSize,
+            height: cornerSize,
+          }}
+          onMouseDown={(e) => handleMouseDown(e, "bottomLeft")}
+        />
+        <div
+          className="absolute bg-white border border-gray-400 rounded-full cursor-nwse-resize"
+          style={{
+            left: bottomRight.x - cornerSize / 2,
+            top: bottomRight.y - cornerSize / 2,
+            width: cornerSize,
+            height: cornerSize,
+          }}
+          onMouseDown={(e) => handleMouseDown(e, "bottomRight")}
+        />
+
+        {/* Grid lines for rule of thirds */}
+        <div
+          className="absolute border-l border-white border-opacity-50"
+          style={{
+            left: cropArea.x + cropArea.width / 3,
+            top: cropArea.y,
+            height: cropArea.height,
+          }}
+        />
+        <div
+          className="absolute border-l border-white border-opacity-50"
+          style={{
+            left: cropArea.x + (cropArea.width / 3) * 2,
+            top: cropArea.y,
+            height: cropArea.height,
+          }}
+        />
+        <div
+          className="absolute border-t border-white border-opacity-50"
+          style={{
+            left: cropArea.x,
+            top: cropArea.y + cropArea.height / 3,
+            width: cropArea.width,
+          }}
+        />
+        <div
+          className="absolute border-t border-white border-opacity-50"
+          style={{
+            left: cropArea.x,
+            top: cropArea.y + (cropArea.height / 3) * 2,
+            width: cropArea.width,
+          }}
+        />
+      </>
+    )
+  }, [cropArea, handleMouseDown])
 
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold">Crop Your Image</h2>
-        {/* <Button variant="ghost" onClick={() => onCroppedImage("")} className="flex items-center gap-1">
-          <ArrowLeft className="w-4 h-4" />
-          Back
-        </Button> */}
       </div>
 
-      <div className="relative h-[400px] md:h-[500px] bg-muted/30  rounded-lg overflow-hidden">
-        <Cropper
-          image={imageFile.url}
-          crop={crop}
-          zoom={zoom}
-          rotation={rotation}
-          aspect={cropMode === "aspect" ? aspectRatio : undefined}
-          onCropChange={setCrop}
-          onCropComplete={onCropComplete}
-          onZoomChange={setZoom}
-          onMediaLoaded={(mediaSize) => {
-            if (mediaSize && "naturalWidth" in mediaSize) {
-              onImageLoad(mediaSize as unknown as HTMLImageElement)
-            }
+      <div
+        ref={containerRef}
+        className="relative h-[400px] md:h-[500px] bg-muted/30 rounded-lg overflow-hidden"
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+        style={{
+          backgroundColor: extendCanvas ? backgroundColor : undefined,
+          cursor: isDragging ? (dragCornerRef.current === "move" ? "move" : "crosshair") : "default",
+        }}
+      >
+        {/* Background pattern for transparency */}
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage:
+              "linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)",
+            backgroundSize: "20px 20px",
+            backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px",
+            opacity: 0.3,
           }}
-          objectFit="contain"
         />
+
+        {/* Image */}
+        <img
+          ref={imageRef}
+          src={imageFile.url || "/placeholder.svg"}
+          alt="Upload"
+          className="absolute"
+          style={{
+            left: imagePosition.x,
+            top: imagePosition.y,
+            width: imageSize.width,
+            height: imageSize.height,
+            transform: `rotate(${rotation}deg)`,
+            transformOrigin: "center center",
+            objectFit: "contain",
+            willChange: "transform", // Hint to browser to optimize
+          }}
+        />
+
+        {/* Crop area */}
+        {cropAreaElements}
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -261,7 +718,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
             <ZoomOut className="w-4 h-4 text-muted-foreground" />
             <Slider
               value={[zoom]}
-              min={1}
+              min={0.5}
               max={3}
               step={0.1}
               onValueChange={(value) => setZoom(value[0])}
@@ -306,6 +763,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
                   <SelectValue placeholder="Select aspect ratio" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="free">Free Form</SelectItem>
                   <SelectItem value="1">1:1 (Square)</SelectItem>
                   <SelectItem value="1.7777777777777777">16:9 (Landscape)</SelectItem>
                   <SelectItem value="0.5625">9:16 (Portrait)</SelectItem>
