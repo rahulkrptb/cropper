@@ -44,11 +44,11 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
   })
   const [extendCanvas, setExtendCanvas] = useState<boolean>(false)
   const [backgroundColor, setBackgroundColor] = useState<string>("#ffffff")
+  const [imageLoaded, setImageLoaded] = useState(false)
 
   // Refs for the container and image
   const containerRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const rafRef = useRef<number | null>(null)
 
   // State for the crop area
@@ -63,46 +63,100 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
   const dragCornerRef = useRef<string | null>(null)
   const dragStartCropRef = useRef<CropArea | null>(null)
 
-  // Memoize the image loading function to prevent unnecessary re-renders
-  const loadImage = useCallback(() => {
-    const img = new Image()
-    img.onload = () => {
+  // Initialize the crop area when the component mounts
+  useEffect(() => {
+    const initializeContainer = () => {
       if (containerRef.current) {
         const containerWidth = containerRef.current.clientWidth
         const containerHeight = containerRef.current.clientHeight
-
-        // Calculate the scaled image dimensions to fit in the container
-        const scale = Math.min(containerWidth / img.width, containerHeight / img.height) * zoom
-
-        const scaledWidth = img.width * scale
-        const scaledHeight = img.height * scale
-
-        // Center the image in the container
-        const x = (containerWidth - scaledWidth) / 2
-        const y = (containerHeight - scaledHeight) / 2
-
-        setImageSize({ width: scaledWidth, height: scaledHeight })
         setContainerSize({ width: containerWidth, height: containerHeight })
-        setImagePosition({ x, y })
-
-        // Initialize the crop area to cover the entire image
-        const initialCrop = {
-          x,
-          y,
-          width: scaledWidth,
-          height: scaledHeight,
-        }
-
-        setCropArea(initialCrop)
       }
     }
-    img.src = imageFile.url
-  }, [imageFile.url, zoom])
 
-  // Initialize the crop area when the image loads
+    initializeContainer()
+
+    // Also set up a resize observer to handle container size changes
+    if (containerRef.current) {
+      const resizeObserver = new ResizeObserver(() => {
+        initializeContainer()
+      })
+
+      resizeObserver.observe(containerRef.current)
+
+      return () => {
+        if (containerRef.current) {
+          resizeObserver.unobserve(containerRef.current)
+        }
+      }
+    }
+  }, [])
+
+  // Handle image load
+  const handleImageLoad = useCallback(() => {
+    if (!imageRef.current || !containerRef.current) return
+
+    const img = imageRef.current
+    const containerWidth = containerRef.current.clientWidth
+    const containerHeight = containerRef.current.clientHeight
+
+    // Calculate the scaled image dimensions to fit in the container
+    const scale = Math.min(containerWidth / img.naturalWidth, containerHeight / img.naturalHeight) * zoom
+
+    const scaledWidth = img.naturalWidth * scale
+    const scaledHeight = img.naturalHeight * scale
+
+    // Center the image in the container
+    const x = (containerWidth - scaledWidth) / 2
+    const y = (containerHeight - scaledHeight) / 2
+
+    setImageSize({ width: scaledWidth, height: scaledHeight })
+    setImagePosition({ x, y })
+
+    // Initialize the crop area to cover the entire image
+    setCropArea({
+      x,
+      y,
+      width: scaledWidth,
+      height: scaledHeight,
+    })
+
+    setImageLoaded(true)
+  }, [zoom])
+
+  // Update image position and size when zoom changes
   useEffect(() => {
-    loadImage()
-  }, [loadImage])
+    if (imageLoaded && imageRef.current && containerRef.current) {
+      const img = imageRef.current
+      const containerWidth = containerRef.current.clientWidth
+      const containerHeight = containerRef.current.clientHeight
+
+      // Calculate the scaled image dimensions
+      const scale = Math.min(containerWidth / img.naturalWidth, containerHeight / img.naturalHeight) * zoom
+
+      const scaledWidth = img.naturalWidth * scale
+      const scaledHeight = img.naturalHeight * scale
+
+      // Center the image
+      const x = (containerWidth - scaledWidth) / 2
+      const y = (containerHeight - scaledHeight) / 2
+
+      setImageSize({ width: scaledWidth, height: scaledHeight })
+      setImagePosition({ x, y })
+
+      // Adjust crop area proportionally
+      const widthRatio = scaledWidth / imageSize.width
+      const heightRatio = scaledHeight / imageSize.height
+
+      if (widthRatio !== 1 || heightRatio !== 1) {
+        setCropArea((prev) => ({
+          x: x + (prev.x - imagePosition.x) * widthRatio,
+          y: y + (prev.y - imagePosition.y) * heightRatio,
+          width: prev.width * widthRatio,
+          height: prev.height * heightRatio,
+        }))
+      }
+    }
+  }, [zoom, imageLoaded])
 
   // Update crop area when aspect ratio changes
   useEffect(() => {
@@ -148,7 +202,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
       }
 
       timeoutId = setTimeout(() => {
-        if (containerRef.current && imageRef.current) {
+        if (containerRef.current && imageRef.current && imageLoaded) {
           const containerWidth = containerRef.current.clientWidth
           const containerHeight = containerRef.current.clientHeight
 
@@ -188,7 +242,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
         clearTimeout(timeoutId)
       }
     }
-  }, [cropArea, imagePosition, imageSize, zoom])
+  }, [cropArea, imagePosition, imageSize, zoom, imageLoaded])
 
   // Handle aspect ratio change
   const handleAspectRatioChange = useCallback(
@@ -429,15 +483,17 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
 
   // Reset crop to cover the entire image
   const resetCrop = useCallback(() => {
-    setCropArea({
-      x: imagePosition.x,
-      y: imagePosition.y,
-      width: imageSize.width,
-      height: imageSize.height,
-    })
-    setZoom(1)
-    setRotation(0)
-  }, [imagePosition.x, imagePosition.y, imageSize.height, imageSize.width])
+    if (imageLoaded) {
+      setCropArea({
+        x: imagePosition.x,
+        y: imagePosition.y,
+        width: imageSize.width,
+        height: imageSize.height,
+      })
+      setZoom(1)
+      setRotation(0)
+    }
+  }, [imagePosition.x, imagePosition.y, imageSize.height, imageSize.width, imageLoaded])
 
   // Create a cropped image from the canvas
   const createImage = useCallback((url: string): Promise<HTMLImageElement> => {
@@ -552,7 +608,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
 
   // Memoize the crop area rendering to prevent unnecessary re-renders
   const cropAreaElements = useMemo(() => {
-    if (!cropArea.width || !cropArea.height) return null
+    if (!cropArea.width || !cropArea.height || !imageLoaded) return null
 
     // Calculate corner positions
     const topLeft = { x: cropArea.x, y: cropArea.y }
@@ -566,7 +622,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
     return (
       <>
         {/* Overlay outside crop area */}
-        <div className="absolute inset-0 bg-black bg-opacity-50">
+        <div className="absolute inset-0 bg-black/20  bg-opacity-80">
           {/* Clear the crop area */}
           <div
             className="absolute border-2 border-white"
@@ -659,7 +715,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
         />
       </>
     )
-  }, [cropArea, handleMouseDown])
+  }, [cropArea, handleMouseDown, imageLoaded])
 
   return (
     <div className="space-y-6">
@@ -705,8 +761,17 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
             transformOrigin: "center center",
             objectFit: "contain",
             willChange: "transform", // Hint to browser to optimize
+            visibility: imageLoaded ? "visible" : "hidden",
           }}
+          onLoad={handleImageLoad}
         />
+
+        {/* Loading indicator */}
+        {!imageLoaded && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+          </div>
+        )}
 
         {/* Crop area */}
         {cropAreaElements}
