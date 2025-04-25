@@ -30,10 +30,10 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
   return (
     <>
       {/* Overlay outside crop area */}
-      <div className="absolute inset-0 bg-black/20 bg-opacity-80 pointer-events-none">
+      <div className="absolute inset-0 bg-black/20 bg-opacity-80 pointer-events-none select-none">
         {/* Clear the crop area */}
         <div
-          className="absolute border-2 border-white pointer-events-auto"
+          className="absolute border-2 border-white pointer-events-auto select-none"
           style={{
             left: cropArea.x,
             top: cropArea.y,
@@ -41,15 +41,18 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
             height: cropArea.height,
             backgroundColor: "transparent",
             cursor: "move",
-            willChange: "transform, left, top, width, height", // Hint to browser for optimization
+            willChange: "transform, left, top, width, height",
+            userSelect: "none",
+            WebkitUserSelect: "none",
           }}
           onMouseDown={(e) => handleMouseDown(e)}
+          onDragStart={(e) => e.preventDefault()}
         />
       </div>
 
       {/* Draggable corners */}
       <div
-        className="absolute bg-white border border-gray-400 rounded-full cursor-nwse-resize"
+        className="absolute bg-white border border-gray-400 rounded-full cursor-nwse-resize select-none"
         style={{
           left: topLeft.x - cornerSize / 2,
           top: topLeft.y - cornerSize / 2,
@@ -57,11 +60,14 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
           height: cornerSize,
           willChange: "transform, left, top",
           zIndex: 10,
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
         onMouseDown={(e) => handleMouseDown(e, "topLeft")}
+        onDragStart={(e) => e.preventDefault()}
       />
       <div
-        className="absolute bg-white border border-gray-400 rounded-full cursor-nesw-resize"
+        className="absolute bg-white border border-gray-400 rounded-full cursor-nesw-resize select-none"
         style={{
           left: topRight.x - cornerSize / 2,
           top: topRight.y - cornerSize / 2,
@@ -69,11 +75,14 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
           height: cornerSize,
           willChange: "transform, left, top",
           zIndex: 10,
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
         onMouseDown={(e) => handleMouseDown(e, "topRight")}
+        onDragStart={(e) => e.preventDefault()}
       />
       <div
-        className="absolute bg-white border border-gray-400 rounded-full cursor-nesw-resize"
+        className="absolute bg-white border border-gray-400 rounded-full cursor-nesw-resize select-none"
         style={{
           left: bottomLeft.x - cornerSize / 2,
           top: bottomLeft.y - cornerSize / 2,
@@ -81,11 +90,14 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
           height: cornerSize,
           willChange: "transform, left, top",
           zIndex: 10,
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
         onMouseDown={(e) => handleMouseDown(e, "bottomLeft")}
+        onDragStart={(e) => e.preventDefault()}
       />
       <div
-        className="absolute bg-white border border-gray-400 rounded-full cursor-nwse-resize"
+        className="absolute bg-white border border-gray-400 rounded-full cursor-nwse-resize select-none"
         style={{
           left: bottomRight.x - cornerSize / 2,
           top: bottomRight.y - cornerSize / 2,
@@ -93,13 +105,16 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
           height: cornerSize,
           willChange: "transform, left, top",
           zIndex: 10,
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
         onMouseDown={(e) => handleMouseDown(e, "bottomRight")}
+        onDragStart={(e) => e.preventDefault()}
       />
 
       {/* Grid lines for rule of thirds */}
       <div
-        className="absolute border-l border-white border-opacity-50 pointer-events-none"
+        className="absolute border-l border-white border-opacity-50 pointer-events-none select-none"
         style={{
           left: cropArea.x + cropArea.width / 3,
           top: cropArea.y,
@@ -107,7 +122,7 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
         }}
       />
       <div
-        className="absolute border-l border-white border-opacity-50 pointer-events-none"
+        className="absolute border-l border-white border-opacity-50 pointer-events-none select-none"
         style={{
           left: cropArea.x + (cropArea.width / 3) * 2,
           top: cropArea.y,
@@ -115,7 +130,7 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
         }}
       />
       <div
-        className="absolute border-t border-white border-opacity-50 pointer-events-none"
+        className="absolute border-t border-white border-opacity-50 pointer-events-none select-none"
         style={{
           left: cropArea.x,
           top: cropArea.y + cropArea.height / 3,
@@ -123,7 +138,7 @@ export const CropAreaOverlay = memo(function CropAreaOverlay({
         }}
       />
       <div
-        className="absolute border-t border-white border-opacity-50 pointer-events-none"
+        className="absolute border-t border-white border-opacity-50 pointer-events-none select-none"
         style={{
           left: cropArea.x,
           top: cropArea.y + (cropArea.height / 3) * 2,
