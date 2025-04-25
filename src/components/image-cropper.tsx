@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, memo } from "react"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { ImageFile } from "@/types"
@@ -16,6 +16,51 @@ interface ImageCropperProps {
   imageFile: ImageFile
   onCroppedImage: (image: string) => void
 }
+
+// Memoized image component for better performance
+const CropperImage = memo(function CropperImage({
+  imageFile,
+  imagePosition,
+  imageSize,
+  rotation,
+  imageLoaded,
+  handleImageLoad,
+}: {
+  imageFile: ImageFile
+  imagePosition: { x: number; y: number }
+  imageSize: { width: number; height: number }
+  rotation: number
+  imageLoaded: boolean
+  handleImageLoad: () => void
+}) {
+  return (
+    <img
+      ref={(el) => {
+        if (el) {
+          el.draggable = false
+        }
+      }}
+      src={imageFile.url || "/placeholder.svg"}
+      alt="Upload"
+      className="absolute select-none pointer-events-none"
+      style={{
+        left: imagePosition.x,
+        top: imagePosition.y,
+        width: imageSize.width,
+        height: imageSize.height,
+        transform: `rotate(${rotation}deg)`,
+        transformOrigin: "center center",
+        objectFit: "contain",
+        willChange: "transform",
+        visibility: imageLoaded ? "visible" : "hidden",
+        zIndex: 1,
+        userSelect: "none",
+        WebkitUserSelect: "none",
+      }}
+      onLoad={handleImageLoad}
+    />
+  )
+})
 
 export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropperProps) {
   const [zoom, setZoom] = useState(1)
@@ -99,19 +144,22 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
 
       <div
         ref={containerRef}
-        className="relative h-[400px] md:h-[500px] rounded-lg overflow-hidden"
+        className="relative h-[400px] md:h-[500px] rounded-lg overflow-hidden select-none"
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         style={{
           backgroundColor: extendCanvas ? backgroundColor : "var(--muted)",
           cursor: isDragging ? (dragCornerRef.current === "move" ? "move" : "crosshair") : "default",
+          userSelect: "none",
+          WebkitUserSelect: "none",
         }}
+        onDragStart={(e) => e.preventDefault()}
       >
         {/* Background pattern for transparency - only show when not extending canvas */}
         {!extendCanvas && (
           <div
-            className="absolute inset-0"
+            className="absolute inset-0 pointer-events-none"
             style={{
               backgroundImage:
                 "linear-gradient(45deg, #ccc 25%, transparent 25%), linear-gradient(-45deg, #ccc 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ccc 75%), linear-gradient(-45deg, transparent 75%, #ccc 75%)",
@@ -127,7 +175,7 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
           ref={imageRef}
           src={imageFile.url || "/placeholder.svg"}
           alt="Upload"
-          className="absolute"
+          className="absolute select-none pointer-events-none"
           style={{
             left: imagePosition.x,
             top: imagePosition.y,
@@ -136,10 +184,13 @@ export default function ImageCropper({ imageFile, onCroppedImage }: ImageCropper
             transform: `rotate(${rotation}deg)`,
             transformOrigin: "center center",
             objectFit: "contain",
-            willChange: "transform", // Hint to browser to optimize
+            willChange: "transform",
             visibility: imageLoaded ? "visible" : "hidden",
+            userSelect: "none",
+            WebkitUserSelect: "none",
           }}
           onLoad={handleImageLoad}
+          draggable="false"
         />
 
         {/* Loading indicator */}
